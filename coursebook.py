@@ -7,8 +7,8 @@ load_dotenv()
 
 COURSEBOOK_COOKIE = os.getenv("COURSEBOOK_COOKIE")
 
+# Use the session cookie to make the request.
 def fetch_coursebook_html() -> str:
-    """Fetch CourseBook HTML using curl and the stored session cookie."""
     if not COURSEBOOK_COOKIE:
         raise RuntimeError("Missing COURSEBOOK_COOKIE in .env")
 
@@ -42,9 +42,9 @@ def fetch_coursebook_html() -> str:
         text=True,
     )
 
+# Error handling.
     if result.returncode != 0:
         raise RuntimeError(f"curl failed: {result.stderr}")
-
     if not result.stdout.strip():
         raise RuntimeError(
             "CourseBook returned empty response. "
@@ -56,8 +56,8 @@ def fetch_coursebook_html() -> str:
     return data["sethtml"]["#sr"]
 
 
+# Go through the HTML using BeautifulSoup to extract course sections, their status, and titles.
 def parse_sections(html: str) -> dict:
-    """Parse CourseBook HTML and return a dict keyed by section ID."""
     soup = BeautifulSoup(html, "html.parser")
     sections = {}
 
@@ -78,7 +78,6 @@ def parse_sections(html: str) -> dict:
         title = cells[3].get_text(" ", strip=True) if len(cells) > 3 else ""
 
         sections[section_id] = {
-            "section_id": section_id,
             "section": section,
             "status": status,
             "title": title,
@@ -88,7 +87,6 @@ def parse_sections(html: str) -> dict:
     return sections
 
 def get_sections() -> dict:
-    """Fetch and parse the current CourseBook section data."""
     html = fetch_coursebook_html()
     return parse_sections(html)
 
@@ -98,4 +96,4 @@ if __name__ == "__main__":
     sections = get_sections()
 
     for section_id, info in sections.items():
-        print(section_id, info["section"], info["status"], "-", info["title"])
+        print(info["section"], info["status"], "-", info["title"])
