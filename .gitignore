@@ -1,0 +1,5 @@
+.env
+previous_status.json
+__pycache__/
+*.pyc
+tempCodeRunnerFile.py
