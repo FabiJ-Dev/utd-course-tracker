@@ -24,7 +24,7 @@ def fetch_coursebook_html() -> str:
         "-b", COURSEBOOK_COOKIE,
         "-H", "origin: https://coursebook.utdallas.edu",
         "-H", "priority: u=1, i",
-        "-H", "referer: https://coursebook.utdallas.edu/action=search&s%5B%5D=term_26u&s%5B%5D=cp_se",
+        "-H", "referer: https://coursebook.utdallas.edu/action=search&s%5B%5D=term_26f&s%5B%5D=cp_cs",
         "-H", 'sec-ch-ua: "Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
         "-H", "sec-ch-ua-mobile: ?1",
         "-H", 'sec-ch-ua-platform: "iOS"',
@@ -33,8 +33,11 @@ def fetch_coursebook_html() -> str:
         "-H", "sec-fetch-site: same-origin",
         "-H", "user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15",
         "-H", "x-requested-with: XMLHttpRequest",
-        "--data-raw", "action=search&s%5B%5D=term_26u&s%5B%5D=cp_se",
+        "--data-raw", "action=search&s%5B%5D=term_26f&s%5B%5D=cp_cs",
     ]
+
+    # Switch "term_26u" to "term_26f" for fall, and change "cp_se" to "cp_cs" for the Computer Science courses.
+    # RECOMMENDED: Filter the courses based on sections when running classbot.py, because there are many more courses in the CS track for the Fall.
 
     result = subprocess.run(
         curl_command,

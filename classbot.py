@@ -21,26 +21,55 @@ CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "300"))
 # Path for saving the last known state of watched sections.
 STATE_FILE = Path("previous_status.json")
 
+# Modify this with the exact course code, section number, and term.
 WATCHLIST = {
-    "se2340.0u1.26u",
-    "se3341.0u1.26u",
-    "se3341.0u2.26u",
-    "se3341.0w1.26u",
-    "se3345.0u1.26u",
-    "se3345.5w1.26u",
-    "se3354.0w1.26u",
-    "se3354.5w1.26u",
-    "se3377.0w1.26u",
-    "se4347.0u1.26u",
-    "se4347.5u1.26u",
-    "se4348.0u1.26u",
-    "se4348.5u1.26u",
-    "se4352.0u1.26u",
-    "se4376.0u1.26u",
-    "se4381.0w1.26u",
-    "se6329.0w1.26u",
-    "se6367.0u1.26u",
-    "se6387.0w1.26u",
+    "cs4301.501.26f",
+    "cs4334.001.26f",
+
+    "cs4349.001.26f",
+    "cs4349.002.26f",
+    "cs4349.003.26f",
+    "cs4349.004.26f",
+    "cs4349.006.26f",
+    "cs4349.007.26f",
+    "cs4349.hon.26f",
+
+    "cs4352.001.26f",
+    "cs4352.002.26f",
+
+    "cs4361.001.26f",
+    "cs4361.002.26f",
+    "cs4361.501.26f",
+
+    "cs4365.002.26f",
+    "cs4365.003.26f",
+    "cs4365.501.26f",
+
+    "cs4371.001.26f",
+    "cs4372.501.26f",
+
+    "cs4375.001.26f",
+    "cs4375.002.26f",
+    "cs4375.003.26f",
+    "cs4375.004.26f",
+    "cs4375.hon.26f",
+
+    "cs4386.001.26f",
+    "cs4389.001.26f",
+
+    "cs4390.001.26f",
+    "cs4390.002.26f",
+    "cs4390.003.26f",
+    "cs4390.501.26f",
+    "cs4390.502.26f",
+
+    "cs4391.001.26f",
+    "cs4392.001.26f",
+    "cs4393.001.26f",
+    "cs4395.001.26f",
+
+    "cs4475.001.26f",
+    "cs4485.0w1.26f",
 }
 
 # Start with the previous state from the disk. Use "r" for read.
