@@ -1,190 +1,234 @@
-# Purpose: Loop to find available class slots in the watchlist
-# Only supports 2026SU Software Engineering clubs for now
-# Just run this file once, and then it loops forever until stopped or given an error. 
+# Starting point of the bot. Just hit the run button to start tracking.
 
 # Essential:
-import discord
+import discord, asyncio, json, os
+from discord.ext import commands
 from dotenv import load_dotenv
-import asyncio, json, os
+from datetime import datetime
 from pathlib import Path
 from coursebook import get_sections
-from datetime import datetime
+from watchlist_store import ( # Multiple imports in one .py are tracked like this.
+    get_all_tracked_section_ids,
+    get_tracked_query_groups,
+    get_users_tracking,
+    update_tracked_sections_from_coursebook,
+)
 
 # Load environment variables from .env into the process.
 load_dotenv()
 
-# Read runtime configuration values from environment variables.
+# Variables from .env that will be used to configure the bot and its behavior.
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_USER_ID = os.getenv("DISCORD_USER_ID")
-CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "300"))
-
-# Path for saving the last known state of watched sections.
+ERROR_CHANNEL_ID = os.getenv("ERROR_CHANNEL_ID")
+CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS"))
 STATE_FILE = Path("previous_status.json")
 
-# Modify this with the exact course code, section number, and term.
-WATCHLIST = {
-    "cs4301.501.26f",
-    "cs4334.001.26f",
-
-    "cs4349.001.26f",
-    "cs4349.002.26f",
-    "cs4349.003.26f",
-    "cs4349.004.26f",
-    "cs4349.006.26f",
-    "cs4349.007.26f",
-    "cs4349.hon.26f",
-
-    "cs4352.001.26f",
-    "cs4352.002.26f",
-
-    "cs4361.001.26f",
-    "cs4361.002.26f",
-    "cs4361.501.26f",
-
-    "cs4365.002.26f",
-    "cs4365.003.26f",
-    "cs4365.501.26f",
-
-    "cs4371.001.26f",
-    "cs4372.501.26f",
-
-    "cs4375.001.26f",
-    "cs4375.002.26f",
-    "cs4375.003.26f",
-    "cs4375.004.26f",
-    "cs4375.hon.26f",
-
-    "cs4386.001.26f",
-    "cs4389.001.26f",
-
-    "cs4390.001.26f",
-    "cs4390.002.26f",
-    "cs4390.003.26f",
-    "cs4390.501.26f",
-    "cs4390.502.26f",
-
-    "cs4391.001.26f",
-    "cs4392.001.26f",
-    "cs4393.001.26f",
-    "cs4395.001.26f",
-
-    "cs4475.001.26f",
-    "cs4485.0w1.26f",
-}
-
-# Start with the previous state from the disk. Use "r" for read.
+# Use this to open the state file to read/write the previous CourseBook status for comparison.
 def load_previous_state() -> dict:
     if not STATE_FILE.exists():
-        # When there is no saved state yet, start with an empty record.
         return {}
 
-    with open(STATE_FILE, "r") as file:
+    with STATE_FILE.open("r", encoding="utf-8") as file:
         return json.load(file)
 
-
-# The new state of the class will get sent to disk. Use "w" for write.
+# Use this to save the new status after each check.
 def save_current_state(sections: dict) -> None:
-    with open(STATE_FILE, "w") as file:
-        json.dump(sections, file, indent=2)
+    # The .tmp will be renamed to the actual state file after writing, to avoid corruption.
+    temp_file = STATE_FILE.with_suffix(".tmp") 
+    with temp_file.open("w", encoding="utf-8") as file:
+        json.dump(sections, file, indent=2, sort_keys=True)
 
+    temp_file.replace(STATE_FILE)
 
-# Key of the bot - find_new_openings will detect changes in Coursebook for open classes.
-def find_new_openings(previous: dict, current: dict) -> list[dict]:
+# Normalized means lowercasing section IDs and ensuring all expected fields are present for comparison and messaging.
+def normalize_sections(sections: dict) -> dict:
+    normalized = {}
+
+    for section_id, info in sections.items():
+        if not section_id: 
+            continue # blank/not found = skip
+
+        normalized_id = section_id.lower()
+        fixed_info = dict(info) # Copy the original info to avoid mutating it.
+        fixed_info["section_id"] = normalized_id
+        normalized[normalized_id] = fixed_info 
+
+    return normalized
+
+# Logic to find which tracked sections have changed from Full to Open since the last check, so we can notify users.
+def find_new_openings(previous: dict, current: dict, watched_section_ids: set[str]) -> list[dict]:
     openings = []
 
-    # sorted(WATCHLIST) sorts the classes in the SE track to numbered order.
-    for section_id in sorted(WATCHLIST):
+    for section_id in sorted(watched_section_ids):
+        section_id = section_id.lower() # lowercase the section ID in case of inconsistency or user input errors (such as typing cS or Se)
         if section_id not in current:
             print(f"{section_id} not found in current CourseBook result.")
             continue
 
         old_status = previous.get(section_id, {}).get("status")
-        new_status = current[section_id]["status"]
+        new_status = current[section_id].get("status")
+
         print(f"{section_id}: {old_status} → {new_status}")
 
-        # Only treat Full → Open as a new opening.
         if old_status == "Full" and new_status == "Open":
             openings.append(current[section_id])
 
-    # Following this, send the data to build the DM message.
     return openings
 
+
+# This prints the DM for a section opening, the main purpose of the bot!
 def build_dm_message(info: dict) -> str:
     return (
         "🚨 **Course opened!**\n\n"
-        f"**{info['section']}** — {info['title']}\n"
-        f"Status: **{info['status']}**\n"
-        f"{info['url']}"
+        f"**{info.get('section', 'Unknown Section')}** — {info.get('title', '')}\n"
+        f"Instructor: **{info.get('instructor', 'TBA')}**\n"
+        f"Status: **{info.get('status', 'Unknown')}**\n"
+        f"{info.get('url', '')}"
     )
 
-# Bot loop - use asyncio to sleep during the required period to not spam Coursebook with requests.
-class ClassBot(discord.Client):
+
+# This prints the message for errors, in case an exception occurs in the bot. Printed to my private error channel.
+def build_error_message(error: Exception) -> str:
+    return (
+        "⚠️ **UTD Course Tracker encountered an error while checking CourseBook.**\n\n"
+        f"Error:\n`{error}`\n\n"
+        "Possible causes:\n"
+        "- CourseBook cookie expired\n"
+        "- CourseBook changed its HTML format\n"
+        "- CourseBook request timed out\n"
+        "- Network/request failure\n\n"
+        f"Time: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
+    )
+
+
+# The Bot class that handles everything.
+class ClassBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        super().__init__(command_prefix="!", intents=intents)
+        self.bg_task: asyncio.Task | None = None
+
     async def setup_hook(self):
-        # Create a background task (bg_task) before the bot starts processing events.
+        await self.load_extension("track")
+        await self.load_extension("list")
+        test_guild_id = os.getenv("TEST_GUILD_ID")
+
+        # If the test guild ID exists, sync commands to that guild only for faster development iteration. Otherwise, sync globally.
+        if test_guild_id:
+            guild = discord.Object(id=int(test_guild_id))
+            self.tree.copy_global_to(guild=guild)
+            synced_guild_commands = await self.tree.sync(guild=guild)
+
+            # Delete old GLOBAL commands from Discord (prevents duplicate commands)
+            self.tree.clear_commands(guild=None)
+            synced_global_commands = await self.tree.sync()
+            print(f"Synced {len(synced_guild_commands)} commands to test guild {test_guild_id}.")
+            print(f"Cleared global commands. Global command count is now {len(synced_global_commands)}.")
+
+        # Else (in case we're running in production without a test guild), sync globally as before.
+        else:
+            synced_global_commands = await self.tree.sync()
+            print(f"Synced {len(synced_global_commands)} global slash commands.")
+
+        # asyncio will run this function while bot runs in the background, checks coursebook without blocking other functions.
         self.bg_task = asyncio.create_task(self.course_check_loop())
 
     async def on_ready(self):
-        # Called once when the bot has successfully connected.
         print(f"Logged in as {self.user}")
         print(f"Checking CourseBook every {CHECK_INTERVAL_SECONDS} seconds.")
 
+    # Error handling function, first tries the channel in my private server, and then my DM's if that fails. 
+    async def send_error_notification_once(self, error: Exception) -> bool:
+        error_message = build_error_message(error)
+
+        # First, try the channel, then, admin DM. If both fail, just print the error and return False to indicate the notification was not sent.
+        if ERROR_CHANNEL_ID:
+            try:
+                channel = self.get_channel(int(ERROR_CHANNEL_ID))
+                if channel is None:
+                    channel = await self.fetch_channel(int(ERROR_CHANNEL_ID))
+                await channel.send(error_message)
+                print(f"Sent error notification to channel {ERROR_CHANNEL_ID}.")
+                return True
+            except Exception as channel_error:
+                print(f"Could not send error message to error channel: {channel_error}")
+
+        if DISCORD_USER_ID:
+            try:
+                admin_user = await self.fetch_user(int(DISCORD_USER_ID))
+                await admin_user.send(error_message)
+                print(f"Sent fallback error DM to admin user {DISCORD_USER_ID}.")
+                return True
+            except Exception as dm_error:
+                print(f"Could not send fallback admin error DM: {dm_error}")
+        return False
+
     async def course_check_loop(self):
         await self.wait_until_ready()
-
-        if not DISCORD_USER_ID:
-            raise RuntimeError("Missing DISCORD_USER_ID in .env")
-
-        # Fetch the target user once so we can send DMs repeatedly.
-        user = await self.fetch_user(int(DISCORD_USER_ID))
-        error_dm_sent = False
+        # Only one error alert sent per error occurrence, to avoid spamming if the error persists across multiple checks. Will reset if a check succeeds.
+        error_alert_sent = False 
 
         while not self.is_closed():
             try:
                 previous = load_previous_state()
+                print(f"\nChecking CourseBook at " f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
 
-                # All checks timestamped for debugging and validation.
-                print(f"\nChecking CourseBook at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
-                current = await asyncio.to_thread(get_sections)
+                query_groups = get_tracked_query_groups()
+                if not query_groups:
+                    print("No tracked courses yet.")
+                    error_alert_sent = False
+                    continue
 
-                openings = find_new_openings(previous, current)
+                current = {} # This will hold the combined sections from all subjects for the current check, keyed by normalized section ID.
+
+                for term, subject in sorted(query_groups):
+                    sections = await asyncio.to_thread(get_sections, term=term, subjects=(subject,))
+                    current.update(normalize_sections(sections))
+
+                updated_records = update_tracked_sections_from_coursebook(current)
+
+                if updated_records:
+                    print(f"Updated {updated_records} saved watchlist field(s).")
+
+                watched_section_ids = get_all_tracked_section_ids()
+                openings = find_new_openings(previous=previous, current=current, watched_section_ids=watched_section_ids)
 
                 for info in openings:
+                    section_id = info["section_id"].lower()
                     message = build_dm_message(info)
-                    await user.send(message)
-                    print(f"Sent DM for {info['section']}")
+                    user_ids = get_users_tracking(section_id)
 
+                    for user_id in user_ids:
+                        try:
+                            target_user = await self.fetch_user(int(user_id))
+                            await target_user.send(message)
+
+                            print(f"Sent opening DM for {info.get('section', section_id)} to user {user_id}")
+
+                        except Exception as dm_error:
+                            print(f"Could not DM user {user_id} for {section_id}: {dm_error}")
                 save_current_state(current)
-
-                # If everything succeeded, allow future error notifications again.
-                error_dm_sent = False
+                # If the check succeeded, allow future error alerts again.
+                error_alert_sent = False
 
             except Exception as error:
                 print(f"Error while checking CourseBook: {error}")
+                if not error_alert_sent:
+                    error_alert_sent = await self.send_error_notification_once(error)
 
-                if not error_dm_sent:
-                    try:
-                        await user.send(
-                            "⚠️ ClassBot encountered an error while checking CourseBook:\n"
-                            f"`{error}`\n\n"
-                            "The CourseBook cookie may have expired."
-                        )
-                        error_dm_sent = True
-                    except Exception as dm_error:
-                        print(f"Could not send error DM: {dm_error}")
-
+            # Use 'finally' to ensure the bot continues checking periodically even if an error occurs, instead of stopping entirely.        
             finally:
-                # Wait the configured amount of time before checking again.
                 await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
-
+# The main function to start the bot.
 def main():
     if not DISCORD_TOKEN:
         raise RuntimeError("Missing DISCORD_TOKEN in .env")
 
-    intents = discord.Intents.default()
-    client = ClassBot(intents=intents)
+    client = ClassBot()
     client.run(DISCORD_TOKEN)
-
-
+    
+# The entry point of the script. When you run this file, it will execute the main() function which starts the bot.
 if __name__ == "__main__":
     main()
