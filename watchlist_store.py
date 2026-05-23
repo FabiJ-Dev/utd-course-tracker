@@ -170,11 +170,11 @@ def get_tracked_query_groups() -> set[tuple[str, str]]:
 
 # Refresh saved watchlist records with the latest CourseBook data.
 # This fixes stale fields like TBA instructors, changed statuses, or updated titles.
-def update_tracked_sections_from_coursebook(current_sections: dict) -> int:
+def update_tracked_sections_from_coursebook(current_sections: dict) -> list[dict]:
     data = load_watchlist()
-    updated_count = 0
+    changes = []
 
-    for user_data in data.get("users", {}).values():
+    for user_id, user_data in data.get("users", {}).items():
         user_sections = user_data.get("sections", {})
 
         for section_id, saved_info in user_sections.items():
@@ -194,6 +194,7 @@ def update_tracked_sections_from_coursebook(current_sections: dict) -> int:
             ]
 
             for field in fields_to_update:
+                old_value = saved_info.get(field)
                 new_value = latest_info.get(field)
 
                 if new_value is None:
@@ -202,11 +203,20 @@ def update_tracked_sections_from_coursebook(current_sections: dict) -> int:
                 if field == "instructor" and not new_value:
                     new_value = "TBA"
 
-                if saved_info.get(field) != new_value:
+                if old_value != new_value:
                     saved_info[field] = new_value
-                    updated_count += 1
 
-    if updated_count > 0:
+                    changes.append(
+                        {
+                            "user_id": user_id,
+                            "section_id": normalized_id,
+                            "field": field,
+                            "old": old_value,
+                            "new": new_value,
+                        }
+                    )
+
+    if changes:
         save_watchlist(data)
 
-    return updated_count
+    return changes

@@ -3,3 +3,4 @@ previous_status.json
 __pycache__/
 *.pyc
 tempCodeRunnerFile.py
+watchlist.json

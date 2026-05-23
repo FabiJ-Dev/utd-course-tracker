@@ -114,40 +114,35 @@ class ClassBot(commands.Bot):
         await self.load_extension("list")
         test_guild_id = os.getenv("TEST_GUILD_ID")
 
-        # If the test guild ID exists, sync commands to that guild only for faster development iteration. Otherwise, sync globally.
         if test_guild_id:
             guild = discord.Object(id=int(test_guild_id))
             self.tree.copy_global_to(guild=guild)
             synced_guild_commands = await self.tree.sync(guild=guild)
 
-            # Delete old GLOBAL commands from Discord (prevents duplicate commands)
             self.tree.clear_commands(guild=None)
             synced_global_commands = await self.tree.sync()
+
             print(f"Synced {len(synced_guild_commands)} commands to test guild {test_guild_id}.")
             print(f"Cleared global commands. Global command count is now {len(synced_global_commands)}.")
-
-        # Else (in case we're running in production without a test guild), sync globally as before.
         else:
             synced_global_commands = await self.tree.sync()
             print(f"Synced {len(synced_global_commands)} global slash commands.")
 
-        # asyncio will run this function while bot runs in the background, checks coursebook without blocking other functions.
         self.bg_task = asyncio.create_task(self.course_check_loop())
 
     async def on_ready(self):
         print(f"Logged in as {self.user}")
         print(f"Checking CourseBook every {CHECK_INTERVAL_SECONDS} seconds.")
 
-    # Error handling function, first tries the channel in my private server, and then my DM's if that fails. 
     async def send_error_notification_once(self, error: Exception) -> bool:
         error_message = build_error_message(error)
 
-        # First, try the channel, then, admin DM. If both fail, just print the error and return False to indicate the notification was not sent.
         if ERROR_CHANNEL_ID:
             try:
                 channel = self.get_channel(int(ERROR_CHANNEL_ID))
                 if channel is None:
                     channel = await self.fetch_channel(int(ERROR_CHANNEL_ID))
+
                 await channel.send(error_message)
                 print(f"Sent error notification to channel {ERROR_CHANNEL_ID}.")
                 return True
@@ -162,37 +157,65 @@ class ClassBot(commands.Bot):
                 return True
             except Exception as dm_error:
                 print(f"Could not send fallback admin error DM: {dm_error}")
+
         return False
 
     async def course_check_loop(self):
         await self.wait_until_ready()
-        # Only one error alert sent per error occurrence, to avoid spamming if the error persists across multiple checks. Will reset if a check succeeds.
-        error_alert_sent = False 
+
+        error_alert_sent = False
 
         while not self.is_closed():
             try:
                 previous = load_previous_state()
-                print(f"\nChecking CourseBook at " f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
+                print(f"\nChecking CourseBook at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}...")
 
                 query_groups = get_tracked_query_groups()
+
                 if not query_groups:
                     print("No tracked courses yet.")
                     error_alert_sent = False
                     continue
 
-                current = {} # This will hold the combined sections from all subjects for the current check, keyed by normalized section ID.
+                current = {}
 
                 for term, subject in sorted(query_groups):
                     sections = await asyncio.to_thread(get_sections, term=term, subjects=(subject,))
                     current.update(normalize_sections(sections))
 
-                updated_records = update_tracked_sections_from_coursebook(current)
+                changes = update_tracked_sections_from_coursebook(current)
 
-                if updated_records:
-                    print(f"Updated {updated_records} saved watchlist field(s).")
+                if changes:
+                    print(f"Updated {len(changes)} saved watchlist field(s).")
+
+                    printed_changes = set()
+
+                    for change in changes:
+                        change_key = (
+                            change["section_id"],
+                            change["field"],
+                            change["old"],
+                            change["new"],
+                        )
+
+                        if change_key in printed_changes:
+                            continue
+
+                        printed_changes.add(change_key)
+
+                        print(
+                            f"  {change['section_id']} "
+                            f"{change['field']}: "
+                            f"{change['old']} → {change['new']}"
+                        )
 
                 watched_section_ids = get_all_tracked_section_ids()
-                openings = find_new_openings(previous=previous, current=current, watched_section_ids=watched_section_ids)
+
+                openings = find_new_openings(
+                    previous=previous,
+                    current=current,
+                    watched_section_ids=watched_section_ids,
+                )
 
                 for info in openings:
                     section_id = info["section_id"].lower()
@@ -203,21 +226,20 @@ class ClassBot(commands.Bot):
                         try:
                             target_user = await self.fetch_user(int(user_id))
                             await target_user.send(message)
-
                             print(f"Sent opening DM for {info.get('section', section_id)} to user {user_id}")
 
                         except Exception as dm_error:
                             print(f"Could not DM user {user_id} for {section_id}: {dm_error}")
+
                 save_current_state(current)
-                # If the check succeeded, allow future error alerts again.
                 error_alert_sent = False
 
             except Exception as error:
                 print(f"Error while checking CourseBook: {error}")
+
                 if not error_alert_sent:
                     error_alert_sent = await self.send_error_notification_once(error)
 
-            # Use 'finally' to ensure the bot continues checking periodically even if an error occurs, instead of stopping entirely.        
             finally:
                 await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
