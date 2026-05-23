@@ -112,6 +112,7 @@ class ClassBot(commands.Bot):
     async def setup_hook(self):
         await self.load_extension("track")
         await self.load_extension("list")
+        await self.load_extension("info")
         test_guild_id = os.getenv("TEST_GUILD_ID")
 
         if test_guild_id:
